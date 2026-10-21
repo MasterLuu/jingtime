@@ -30,26 +30,10 @@ final class ClockPanel: NSPanel {
             backing: .buffered,
             defer: false
         )
-        isFloatingPanel = true
-        isOpaque = false
-        backgroundColor = .clear
-        hasShadow = true
-        hidesOnDeactivate = false
+        configureOverlayPanel(self)
         isMovable = false
         isRestorable = false
-        isReleasedWhenClosed = false
         becomesKeyOnlyIfNeeded = true
-        sharingType = .readOnly
-        isExcludedFromWindowsMenu = true
-        animationBehavior = .none
-        level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.assistiveTechHighWindow)))
-        collectionBehavior = [
-            .canJoinAllSpaces,
-            .canJoinAllApplications,
-            .fullScreenAuxiliary,
-            .stationary,
-            .ignoresCycle,
-        ]
         let view = ClockView(frame: NSRect(origin: .zero, size: contentSize))
         view.autoresizingMask = [.width, .height]
         contentView = view
@@ -157,17 +141,7 @@ final class ActionMenu: NSPanel {
             backing: .buffered,
             defer: false
         )
-        isFloatingPanel = true
-        isOpaque = false
-        backgroundColor = .clear
-        hasShadow = true
-        hidesOnDeactivate = false
-        isReleasedWhenClosed = false
-        sharingType = .readOnly
-        isExcludedFromWindowsMenu = true
-        animationBehavior = .none
-        level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.assistiveTechHighWindow)))
-        collectionBehavior = [.canJoinAllSpaces, .canJoinAllApplications, .fullScreenAuxiliary, .stationary, .ignoresCycle]
+        configureOverlayPanel(self)
         let view = MenuView(frame: NSRect(origin: .zero, size: size))
         view.onSelect = { [weak self] action in self?.onSelect(action) }
         contentView = view
@@ -177,13 +151,42 @@ final class ActionMenu: NSPanel {
     override var canBecomeMain: Bool { false }
 }
 
+private struct MenuItem {
+    var title: String
+    var action: ActionMenu.Action
+}
+
+private func configureOverlayPanel(_ panel: NSPanel) {
+    panel.isFloatingPanel = true
+    panel.isOpaque = false
+    panel.backgroundColor = .clear
+    panel.hasShadow = true
+    panel.hidesOnDeactivate = false
+    panel.isReleasedWhenClosed = false
+    panel.sharingType = .readOnly
+    panel.isExcludedFromWindowsMenu = true
+    panel.animationBehavior = .none
+    panel.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.assistiveTechHighWindow)))
+    panel.collectionBehavior = [
+        .canJoinAllSpaces,
+        .canJoinAllApplications,
+        .fullScreenAuxiliary,
+        .stationary,
+        .ignoresCycle,
+    ]
+}
+
 private final class MenuView: NSView {
-    static let items = ["隐藏", "回到默认位置", "退出"]
+    static let items = [
+        MenuItem(title: "隐藏", action: .hide),
+        MenuItem(title: "回到默认位置", action: .reset),
+        MenuItem(title: "退出", action: .quit),
+    ]
     static let rowHeight: CGFloat = 32
     static let font = NSFont.systemFont(ofSize: 13, weight: .medium)
 
     static var preferredSize: NSSize {
-        let widest = items.map { ($0 as NSString).size(withAttributes: [.font: font]).width }.max() ?? 80
+        let widest = items.map { ($0.title as NSString).size(withAttributes: [.font: font]).width }.max() ?? 80
         return NSSize(width: ceil(widest) + 36, height: rowHeight * CGFloat(items.count))
     }
 
@@ -210,16 +213,16 @@ private final class MenuView: NSView {
             .foregroundColor: NSColor(calibratedWhite: 0.96, alpha: 1),
             .paragraphStyle: style,
         ]
-        for (index, title) in MenuView.items.enumerated() {
+        for (index, item) in MenuView.items.enumerated() {
             let row = rowRect(index)
-            let textSize = (title as NSString).size(withAttributes: attributes)
+            let textSize = (item.title as NSString).size(withAttributes: attributes)
             let textRect = NSRect(
                 x: 16,
                 y: row.minY + ((row.height - textSize.height) / 2).rounded(.down),
                 width: row.width - 24,
                 height: ceil(textSize.height)
             )
-            (title as NSString).draw(in: textRect, withAttributes: attributes)
+            (item.title as NSString).draw(in: textRect, withAttributes: attributes)
         }
     }
 
@@ -244,12 +247,7 @@ private final class MenuView: NSView {
 
     override func mouseUp(with event: NSEvent) {
         guard let row = row(at: event) else { return }
-        switch row {
-        case 0: onSelect(.hide)
-        case 1: onSelect(.reset)
-        case 2: onSelect(.quit)
-        default: break
-        }
+        onSelect(MenuView.items[row].action)
     }
 
     private func setHighlight(_ row: Int?) {
