@@ -1,0 +1,276 @@
+import AppKit
+import BeijingTimeCore
+
+enum ClockMetrics {
+    static let font = NSFont.monospacedDigitSystemFont(ofSize: 20, weight: .medium)
+    static let sample = "2026年01月05日 09:05:03"
+    static let horizontalPadding: CGFloat = 16
+    static let verticalPadding: CGFloat = 8
+
+    static var windowSize: NSSize {
+        let text = (sample as NSString).size(withAttributes: [.font: font])
+        return NSSize(
+            width: ceil(text.width) + horizontalPadding * 2,
+            height: ceil(text.height) + verticalPadding * 2
+        )
+    }
+}
+
+/// 系统菜单的窗口层级低于这块面板，右键因此用自己的小窗。
+final class ClockPanel: NSPanel {
+    var onDragBegan: () -> Void = {}
+    var onDrag: (CGPoint) -> Void = { _ in }
+    var onDragEnded: () -> Void = {}
+    var onMenu: (CGPoint) -> Void = { _ in }
+
+    init(contentSize: NSSize) {
+        super.init(
+            contentRect: NSRect(origin: .zero, size: contentSize),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        isFloatingPanel = true
+        isOpaque = false
+        backgroundColor = .clear
+        hasShadow = true
+        hidesOnDeactivate = false
+        isMovable = false
+        isRestorable = false
+        isReleasedWhenClosed = false
+        becomesKeyOnlyIfNeeded = true
+        sharingType = .readOnly
+        isExcludedFromWindowsMenu = true
+        animationBehavior = .none
+        level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.assistiveTechHighWindow)))
+        collectionBehavior = [
+            .canJoinAllSpaces,
+            .canJoinAllApplications,
+            .fullScreenAuxiliary,
+            .stationary,
+            .ignoresCycle,
+        ]
+        let view = ClockView(frame: NSRect(origin: .zero, size: contentSize))
+        view.autoresizingMask = [.width, .height]
+        contentView = view
+    }
+
+    override var canBecomeKey: Bool { false }
+    override var canBecomeMain: Bool { false }
+
+    func show(text: String, reduceTransparency: Bool) {
+        (contentView as? ClockView)?.show(text: text, reduceTransparency: reduceTransparency)
+    }
+}
+
+final class ClockView: NSView {
+    private var text = ClockMetrics.sample
+    private var reduceTransparency = false
+
+    override var isOpaque: Bool { false }
+
+    func show(text: String, reduceTransparency: Bool) {
+        guard text != self.text || reduceTransparency != self.reduceTransparency else { return }
+        self.text = text
+        self.reduceTransparency = reduceTransparency
+        needsDisplay = true
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let face = FixedFace.background(reduceTransparency: reduceTransparency)
+        NSColor(calibratedWhite: face.white, alpha: face.alpha).setFill()
+        NSBezierPath(roundedRect: bounds, xRadius: bounds.height / 2, yRadius: bounds.height / 2).fill()
+
+        let style = NSMutableParagraphStyle()
+        style.alignment = .center
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: ClockMetrics.font,
+            .foregroundColor: NSColor(calibratedWhite: FixedFace.text.white, alpha: FixedFace.text.alpha),
+            .paragraphStyle: style,
+        ]
+        let textSize = (text as NSString).size(withAttributes: attributes)
+        let rect = NSRect(
+            x: 0,
+            y: ((bounds.height - textSize.height) / 2).rounded(.down),
+            width: bounds.width,
+            height: ceil(textSize.height)
+        )
+        (text as NSString).draw(in: rect, withAttributes: attributes)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        if event.modifierFlags.contains(.control) {
+            (window as? ClockPanel)?.onMenu(NSEvent.mouseLocation)
+            return
+        }
+        guard let window else { return }
+        let startMouse = NSEvent.mouseLocation
+        let startOrigin = window.frame.origin
+        var moved = false
+        window.trackEvents(
+            matching: [.leftMouseDragged, .leftMouseUp],
+            timeout: .infinity,
+            mode: .eventTracking
+        ) { event, stop in
+            guard let event else { return }
+            if event.type == .leftMouseUp {
+                stop.pointee = true
+                if moved {
+                    NSCursor.pop()
+                    (window as? ClockPanel)?.onDragEnded()
+                }
+                return
+            }
+            let mouse = NSEvent.mouseLocation
+            let proposed = CGPoint(
+                x: startOrigin.x + mouse.x - startMouse.x,
+                y: startOrigin.y + mouse.y - startMouse.y
+            )
+            if !moved {
+                moved = true
+                NSCursor.closedHand.push()
+                (window as? ClockPanel)?.onDragBegan()
+            }
+            (window as? ClockPanel)?.onDrag(proposed)
+        }
+    }
+
+    override func rightMouseDown(with event: NSEvent) {
+        (window as? ClockPanel)?.onMenu(NSEvent.mouseLocation)
+    }
+}
+
+final class ActionMenu: NSPanel {
+    enum Action {
+        case hide
+        case reset
+        case quit
+    }
+
+    var onSelect: (Action) -> Void = { _ in }
+
+    init() {
+        let size = MenuView.preferredSize
+        super.init(
+            contentRect: NSRect(origin: .zero, size: size),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        isFloatingPanel = true
+        isOpaque = false
+        backgroundColor = .clear
+        hasShadow = true
+        hidesOnDeactivate = false
+        isReleasedWhenClosed = false
+        sharingType = .readOnly
+        isExcludedFromWindowsMenu = true
+        animationBehavior = .none
+        level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.assistiveTechHighWindow)))
+        collectionBehavior = [.canJoinAllSpaces, .canJoinAllApplications, .fullScreenAuxiliary, .stationary, .ignoresCycle]
+        let view = MenuView(frame: NSRect(origin: .zero, size: size))
+        view.onSelect = { [weak self] action in self?.onSelect(action) }
+        contentView = view
+    }
+
+    override var canBecomeKey: Bool { false }
+    override var canBecomeMain: Bool { false }
+}
+
+private final class MenuView: NSView {
+    static let items = ["隐藏", "回到默认位置", "退出"]
+    static let rowHeight: CGFloat = 32
+    static let font = NSFont.systemFont(ofSize: 13, weight: .medium)
+
+    static var preferredSize: NSSize {
+        let widest = items.map { ($0 as NSString).size(withAttributes: [.font: font]).width }.max() ?? 80
+        return NSSize(width: ceil(widest) + 36, height: rowHeight * CGFloat(items.count))
+    }
+
+    var onSelect: (ActionMenu.Action) -> Void = { _ in }
+    private var highlight: Int?
+
+    override var isOpaque: Bool { false }
+
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor(calibratedWhite: 0.16, alpha: 1).setFill()
+        let path = NSBezierPath(roundedRect: bounds, xRadius: 10, yRadius: 10)
+        path.fill()
+        path.addClip()
+
+        if let highlight, MenuView.items.indices.contains(highlight) {
+            NSColor(calibratedWhite: 1, alpha: 0.12).setFill()
+            NSBezierPath(rect: rowRect(highlight)).fill()
+        }
+
+        let style = NSMutableParagraphStyle()
+        style.alignment = .left
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: MenuView.font,
+            .foregroundColor: NSColor(calibratedWhite: 0.96, alpha: 1),
+            .paragraphStyle: style,
+        ]
+        for (index, title) in MenuView.items.enumerated() {
+            let row = rowRect(index)
+            let textSize = (title as NSString).size(withAttributes: attributes)
+            let textRect = NSRect(
+                x: 16,
+                y: row.minY + ((row.height - textSize.height) / 2).rounded(.down),
+                width: row.width - 24,
+                height: ceil(textSize.height)
+            )
+            (title as NSString).draw(in: textRect, withAttributes: attributes)
+        }
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        for area in trackingAreas { removeTrackingArea(area) }
+        addTrackingArea(NSTrackingArea(
+            rect: bounds,
+            options: [.mouseMoved, .mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        ))
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        setHighlight(row(at: event))
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        setHighlight(nil)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        guard let row = row(at: event) else { return }
+        switch row {
+        case 0: onSelect(.hide)
+        case 1: onSelect(.reset)
+        case 2: onSelect(.quit)
+        default: break
+        }
+    }
+
+    private func setHighlight(_ row: Int?) {
+        guard row != highlight else { return }
+        highlight = row
+        needsDisplay = true
+    }
+
+    private func row(at event: NSEvent) -> Int? {
+        let local = convert(event.locationInWindow, from: nil)
+        guard bounds.contains(local) else { return nil }
+        let index = Int((bounds.height - local.y) / MenuView.rowHeight)
+        return MenuView.items.indices.contains(index) ? index : nil
+    }
+
+    private func rowRect(_ index: Int) -> NSRect {
+        NSRect(
+            x: 0,
+            y: bounds.height - CGFloat(index + 1) * MenuView.rowHeight,
+            width: bounds.width,
+            height: MenuView.rowHeight
+        )
+    }
+}
