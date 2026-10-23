@@ -113,6 +113,28 @@ struct PlacementTests {
         #expect(mostlyBuiltin == Stay(screenID: "builtin", relativeOrigin: CGPoint(x: 1300, y: 100)))
     }
 
+    @Test func onTheRightHalfResizingKeepsTheRightEdge() {
+        let wide = CGSize(width: 300, height: 36)
+        let widened = Placement.resize(origin: CGPoint(x: 1172, y: 832), from: window, to: wide, among: [builtin, dell])
+        #expect(widened == CGPoint(x: 1132, y: 832))
+        let narrowed = Placement.resize(origin: CGPoint(x: 1132, y: 832), from: wide, to: window, among: [builtin, dell])
+        #expect(narrowed == CGPoint(x: 1172, y: 832))
+    }
+
+    /// 看的是小窗所在那块屏的左右半边，不是第一块屏的。
+    @Test func onTheLeftHalfOfItsDisplayResizingKeepsTheLeftEdge() {
+        let wide = CGSize(width: 300, height: 36)
+        #expect(Placement.resize(origin: CGPoint(x: 8, y: 400), from: window, to: wide, among: [builtin, dell]) == CGPoint(x: 8, y: 400))
+        #expect(Placement.resize(origin: CGPoint(x: 1500, y: 100), from: window, to: wide, among: [builtin, dell]) == CGPoint(x: 1500, y: 100))
+        #expect(Placement.resize(origin: CGPoint(x: 3092, y: 100), from: window, to: wide, among: [builtin, dell]) == CGPoint(x: 3052, y: 100))
+    }
+
+    @Test func narrowingAtTheEdgeStillLeavesAGrabOnScreen() {
+        let wide = CGSize(width: 300, height: 36)
+        let narrowed = Placement.resize(origin: CGPoint(x: 1360, y: 400), from: wide, to: window, among: [builtin])
+        #expect(narrowed == CGPoint(x: 1360, y: 400))
+    }
+
     @Test func autoHiddenMenuBarStillReservesItsExpandedHeight() {
         #expect(MenuBarReserve.height(isMenuBarScreen: false, revealedGap: 24, statusBarThickness: 24, safeAreaTop: 0) == 0)
         #expect(MenuBarReserve.height(isMenuBarScreen: true, revealedGap: 37, statusBarThickness: 24, safeAreaTop: 0) == 37)

@@ -3,12 +3,16 @@ import BeijingTimeCore
 
 enum ClockMetrics {
     static let font = NSFont.monospacedDigitSystemFont(ofSize: 20, weight: .medium)
-    static let sample = "2026年01月05日 09:05:03"
     static let horizontalPadding: CGFloat = 16
     static let verticalPadding: CGFloat = 8
 
-    static var windowSize: NSSize {
-        let text = (sample as NSString).size(withAttributes: [.font: font])
+    /// 数字等宽，星期都是一个汉字，所以样例有多宽，任何时刻就有多宽。
+    static func sample(showsMilliseconds: Bool) -> String {
+        showsMilliseconds ? "2026年01月05日 周一 09:05:03 0" : "2026年01月05日 周一 09:05:03"
+    }
+
+    static func windowSize(showsMilliseconds: Bool) -> NSSize {
+        let text = (sample(showsMilliseconds: showsMilliseconds) as NSString).size(withAttributes: [.font: font])
         return NSSize(
             width: ceil(text.width) + horizontalPadding * 2,
             height: ceil(text.height) + verticalPadding * 2
@@ -48,7 +52,20 @@ final class ClockPanel: NSPanel {
 }
 
 final class ClockView: NSView {
-    private var text = ClockMetrics.sample
+    private static let attributes: [NSAttributedString.Key: Any] = {
+        let style = NSMutableParagraphStyle()
+        style.alignment = .center
+        return [
+            .font: ClockMetrics.font,
+            .foregroundColor: NSColor(calibratedWhite: FixedFace.text.white, alpha: FixedFace.text.alpha),
+            .paragraphStyle: style,
+        ]
+    }()
+    /// 显示毫秒时每秒画 10 次，行高只量一次：字号固定，任何时刻的行高都和样例一样。
+    private static let textHeight = (ClockMetrics.sample(showsMilliseconds: false) as NSString)
+        .size(withAttributes: attributes).height
+
+    private var text = ClockMetrics.sample(showsMilliseconds: false)
     private var reduceTransparency = false
 
     override var isOpaque: Bool { false }
@@ -65,21 +82,13 @@ final class ClockView: NSView {
         NSColor(calibratedWhite: face.white, alpha: face.alpha).setFill()
         NSBezierPath(roundedRect: bounds, xRadius: bounds.height / 2, yRadius: bounds.height / 2).fill()
 
-        let style = NSMutableParagraphStyle()
-        style.alignment = .center
-        let attributes: [NSAttributedString.Key: Any] = [
-            .font: ClockMetrics.font,
-            .foregroundColor: NSColor(calibratedWhite: FixedFace.text.white, alpha: FixedFace.text.alpha),
-            .paragraphStyle: style,
-        ]
-        let textSize = (text as NSString).size(withAttributes: attributes)
         let rect = NSRect(
             x: 0,
-            y: ((bounds.height - textSize.height) / 2).rounded(.down),
+            y: ((bounds.height - ClockView.textHeight) / 2).rounded(.down),
             width: bounds.width,
-            height: ceil(textSize.height)
+            height: ceil(ClockView.textHeight)
         )
-        (text as NSString).draw(in: rect, withAttributes: attributes)
+        (text as NSString).draw(in: rect, withAttributes: ClockView.attributes)
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -128,10 +137,17 @@ final class ActionMenu: NSPanel {
     enum Action {
         case hide
         case reset
+        case toggleMilliseconds
         case quit
     }
 
     var onSelect: (Action) -> Void = { _ in }
+
+    var showsMilliseconds = false {
+        didSet {
+            (contentView as? MenuView)?.items = MenuView.items(showsMilliseconds: showsMilliseconds)
+        }
+    }
 
     init() {
         let size = MenuView.preferredSize
@@ -177,20 +193,28 @@ private func configureOverlayPanel(_ panel: NSPanel) {
 }
 
 private final class MenuView: NSView {
-    static let items = [
-        MenuItem(title: "隐藏", action: .hide),
-        MenuItem(title: "回到默认位置", action: .reset),
-        MenuItem(title: "退出", action: .quit),
-    ]
+    static func items(showsMilliseconds: Bool) -> [MenuItem] {
+        [
+            MenuItem(title: "隐藏", action: .hide),
+            MenuItem(title: "回到默认位置", action: .reset),
+            MenuItem(title: showsMilliseconds ? "隐藏毫秒" : "显示毫秒", action: .toggleMilliseconds),
+            MenuItem(title: "退出", action: .quit),
+        ]
+    }
     static let rowHeight: CGFloat = 32
     static let font = NSFont.systemFont(ofSize: 13, weight: .medium)
 
+    /// 两种文案都量一遍，切换毫秒时菜单不用改尺寸。
     static var preferredSize: NSSize {
-        let widest = items.map { ($0.title as NSString).size(withAttributes: [.font: font]).width }.max() ?? 80
-        return NSSize(width: ceil(widest) + 36, height: rowHeight * CGFloat(items.count))
+        let all = items(showsMilliseconds: false) + items(showsMilliseconds: true)
+        let widest = all.map { ($0.title as NSString).size(withAttributes: [.font: font]).width }.max() ?? 80
+        return NSSize(width: ceil(widest) + 36, height: rowHeight * CGFloat(items(showsMilliseconds: false).count))
     }
 
     var onSelect: (ActionMenu.Action) -> Void = { _ in }
+    var items = MenuView.items(showsMilliseconds: false) {
+        didSet { needsDisplay = true }
+    }
     private var highlight: Int?
 
     override var isOpaque: Bool { false }
@@ -201,7 +225,7 @@ private final class MenuView: NSView {
         path.fill()
         path.addClip()
 
-        if let highlight, MenuView.items.indices.contains(highlight) {
+        if let highlight, items.indices.contains(highlight) {
             NSColor(calibratedWhite: 1, alpha: 0.12).setFill()
             NSBezierPath(rect: rowRect(highlight)).fill()
         }
@@ -213,7 +237,7 @@ private final class MenuView: NSView {
             .foregroundColor: NSColor(calibratedWhite: 0.96, alpha: 1),
             .paragraphStyle: style,
         ]
-        for (index, item) in MenuView.items.enumerated() {
+        for (index, item) in items.enumerated() {
             let row = rowRect(index)
             let textSize = (item.title as NSString).size(withAttributes: attributes)
             let textRect = NSRect(
@@ -247,7 +271,7 @@ private final class MenuView: NSView {
 
     override func mouseUp(with event: NSEvent) {
         guard let row = row(at: event) else { return }
-        onSelect(MenuView.items[row].action)
+        onSelect(items[row].action)
     }
 
     private func setHighlight(_ row: Int?) {
@@ -260,7 +284,7 @@ private final class MenuView: NSView {
         let local = convert(event.locationInWindow, from: nil)
         guard bounds.contains(local) else { return nil }
         let index = Int((bounds.height - local.y) / MenuView.rowHeight)
-        return MenuView.items.indices.contains(index) ? index : nil
+        return items.indices.contains(index) ? index : nil
     }
 
     private func rowRect(_ index: Int) -> NSRect {
