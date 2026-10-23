@@ -131,7 +131,34 @@ public enum Placement {
         windowSize: CGSize,
         among screens: [DisplayScreen]
     ) -> Stay? {
-        let window = CGRect(origin: windowOrigin, size: windowSize)
+        guard let bestScreen = screenUnderMost(of: CGRect(origin: windowOrigin, size: windowSize), among: screens) else {
+            return nil
+        }
+        return Stay(
+            screenID: bestScreen.id,
+            relativeOrigin: CGPoint(
+                x: windowOrigin.x - bestScreen.frame.minX,
+                y: windowOrigin.y - bestScreen.frame.minY
+            )
+        )
+    }
+
+    /// 时刻文本变宽或变窄时，小窗在所在那块屏的右半边就守住右边缘，左半边就守住左边缘。
+    public static func resize(
+        origin: CGPoint,
+        from oldSize: CGSize,
+        to newSize: CGSize,
+        among screens: [DisplayScreen]
+    ) -> CGPoint {
+        let window = CGRect(origin: origin, size: oldSize)
+        var resized = origin
+        if let screen = screenUnderMost(of: window, among: screens), window.midX > screen.frame.midX {
+            resized.x = window.maxX - newSize.width
+        }
+        return clamp(origin: resized, windowSize: newSize, to: screens)
+    }
+
+    private static func screenUnderMost(of window: CGRect, among screens: [DisplayScreen]) -> DisplayScreen? {
         var bestScreen: DisplayScreen?
         var bestArea: CGFloat = 0
         for screen in screens {
@@ -147,14 +174,7 @@ public enum Placement {
                 bestScreen = screen
             }
         }
-        guard let bestScreen else { return nil }
-        return Stay(
-            screenID: bestScreen.id,
-            relativeOrigin: CGPoint(
-                x: windowOrigin.x - bestScreen.frame.minX,
-                y: windowOrigin.y - bestScreen.frame.minY
-            )
-        )
+        return bestScreen
     }
 
     private static func defaultScreen(among screens: [DisplayScreen]) -> DisplayScreen? {

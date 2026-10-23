@@ -5,9 +5,11 @@ import BeijingTimeCore
 
 final class AppController: NSObject {
     private let store = StayStore()
+    private let millisecondsStore = MillisecondsStore()
     private let sleeper = SecondSleeper()
     private let instance = SingleInstance()
     private var presence = Presence()
+    private var showsMilliseconds = false
     private var panel: ClockPanel?
     private var menu: ActionMenu?
     private var hotkey: GlobalHotkey?
@@ -24,7 +26,8 @@ final class AppController: NSObject {
         if NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.apple.loginwindow" {
             presence.locked = true
         }
-        let panel = ClockPanel(contentSize: ClockMetrics.windowSize)
+        showsMilliseconds = millisecondsStore.load()
+        let panel = ClockPanel(contentSize: ClockMetrics.windowSize(showsMilliseconds: showsMilliseconds))
         self.panel = panel
         panel.onDragBegan = { [weak self] in self?.dragging = true }
         panel.onDrag = { [weak self] origin in self?.drag(to: origin) }
@@ -44,14 +47,14 @@ final class AppController: NSObject {
         if presence.showsWindow {
             let now = Date()
             panel.show(
-                text: MomentText.string(at: now),
+                text: MomentText.string(at: now, showsMilliseconds: showsMilliseconds),
                 reduceTransparency: NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency
             )
             if !panel.isVisible {
                 panel.orderFrontRegardless()
             }
             if presence.wakesEachSecond {
-                sleeper.arm(now: now) { [weak self] in self?.tick() }
+                sleeper.arm(now: now, showsMilliseconds: showsMilliseconds) { [weak self] in self?.tick() }
             } else {
                 sleeper.disarm()
             }
@@ -69,10 +72,10 @@ final class AppController: NSObject {
         }
         let now = Date()
         panel.show(
-            text: MomentText.string(at: now),
+            text: MomentText.string(at: now, showsMilliseconds: showsMilliseconds),
             reduceTransparency: NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency
         )
-        sleeper.arm(now: now) { [weak self] in self?.tick() }
+        sleeper.arm(now: now, showsMilliseconds: showsMilliseconds) { [weak self] in self?.tick() }
     }
 
     private func reposition() {
@@ -128,6 +131,21 @@ final class AppController: NSObject {
         store.save(resolved.stay)
     }
 
+    /// 时刻文本变宽变窄，小窗跟着变，守住靠近屏幕边的那一侧，并记成新的停留位置。
+    private func toggleMilliseconds() {
+        guard presence.showsWindow, let panel else { return }
+        showsMilliseconds.toggle()
+        millisecondsStore.save(showsMilliseconds)
+        let size = ClockMetrics.windowSize(showsMilliseconds: showsMilliseconds)
+        let screens = LiveScreens.snapshot()
+        let origin = Placement.resize(origin: panel.frame.origin, from: panel.frame.size, to: size, among: screens)
+        panel.setFrame(NSRect(origin: origin, size: size), display: false)
+        if let stay = Placement.stick(windowOrigin: origin, windowSize: size, among: screens) {
+            store.save(stay)
+        }
+        refresh()
+    }
+
     private func quit() {
         guard presence.canQuit else { return }
         NSApp.terminate(nil)
@@ -139,6 +157,7 @@ final class AppController: NSObject {
         }
         let menu = self.menu ?? ActionMenu()
         self.menu = menu
+        menu.showsMilliseconds = showsMilliseconds
         menu.onSelect = { [weak self] action in self?.performMenu(action) }
         let origin = menuOrigin(at: point, size: menu.frame.size)
         menu.setFrameOrigin(origin)
@@ -153,6 +172,8 @@ final class AppController: NSObject {
             toggleHide()
         case .reset:
             resetToDefault()
+        case .toggleMilliseconds:
+            toggleMilliseconds()
         case .quit:
             quit()
         }
@@ -278,7 +299,7 @@ final class AppController: NSObject {
     @objc private func accessibilityChanged() {
         guard presence.showsWindow, let panel else { return }
         panel.show(
-            text: MomentText.string(at: Date()),
+            text: MomentText.string(at: Date(), showsMilliseconds: showsMilliseconds),
             reduceTransparency: NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency
         )
     }
